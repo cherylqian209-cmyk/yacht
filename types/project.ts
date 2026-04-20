@@ -34,6 +34,13 @@ export interface TestResult {
   checkedAt: string;
 }
 
+export interface BrowserVerificationResult {
+  passed: boolean;
+  issues: string[];
+  screenshotPath?: string;
+  checkedAt: string;
+}
+
 export interface Project {
   id: string;
   goal: string;
@@ -41,6 +48,7 @@ export interface Project {
   components: ComponentNode[];
   deployedUrl?: string;
   testResults?: TestResult;
+  browserVerification?: BrowserVerificationResult;
   actions: string[];
   systemMessages: string[];
 }

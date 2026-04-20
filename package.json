@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "playwright:install": "playwright install chromium"
   },
   "dependencies": {
     "next": "15.3.1",
+    "playwright": "^1.53.1",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },

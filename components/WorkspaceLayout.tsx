@@ -8,7 +8,7 @@ import { generateWaitlistPage } from '@/lib/build';
 import { deployProject } from '@/lib/deploy';
 import { nextPlannerStatus, plannerMessage } from '@/lib/planner';
 import { testProject } from '@/lib/test';
-import { ComponentNode, Project } from '@/types/project';
+import { BrowserVerificationResult, ComponentNode, Project } from '@/types/project';
 
 function mapComponents(nodes: ComponentNode[], cb: (node: ComponentNode) => ComponentNode): ComponentNode[] {
   return nodes.map((node) => {
@@ -43,6 +43,24 @@ export function WorkspaceLayout() {
 
   const patchProject = (updater: (prev: Project) => Project) => {
     setProject((prev) => (prev ? updater(prev) : prev));
+  };
+
+  const requestBrowserVerification = async (deployedUrl: string): Promise<BrowserVerificationResult> => {
+    const response = await fetch('/api/browser/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: deployedUrl,
+        sampleEmail: emailValue || 'demo@example.com'
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(body || `Request failed with status ${response.status}`);
+    }
+
+    return (await response.json()) as BrowserVerificationResult;
   };
 
   const onGenerate = () => {
@@ -84,38 +102,123 @@ export function WorkspaceLayout() {
     });
   };
 
-  const onDeploy = () => {
-    patchProject((prev) => {
-      const deploying = { ...prev, status: 'deploying' as const };
-      const deployResult = deployProject(deploying);
-      const status = 'deployed' as const;
-      return {
-        ...deploying,
-        status,
-        deployedUrl: deployResult.deployedUrl,
-        actions: [...deploying.actions, deployResult.action],
-        systemMessages: [...deploying.systemMessages, plannerMessage(status)]
-      };
-    });
+  const onDeploy = async () => {
+    const currentProject = project;
+    if (!currentProject) {
+      return;
+    }
+
+    const deploying = { ...currentProject, status: 'deploying' as const };
+    setProject(deploying);
+
+    const deployResult = deployProject(deploying);
+    const deployedProject: Project = {
+      ...deploying,
+      status: 'deployed',
+      deployedUrl: deployResult.deployedUrl,
+      actions: [...deploying.actions, deployResult.action],
+      systemMessages: [...deploying.systemMessages, plannerMessage('deployed')]
+    };
+    setProject(deployedProject);
+
+    const verifyingProject: Project = {
+      ...deployedProject,
+      status: 'verifying',
+      actions: [...deployedProject.actions, 'Started browser verification worker after deploy'],
+      systemMessages: [...deployedProject.systemMessages, plannerMessage('verifying')]
+    };
+    setProject(verifyingProject);
+
+    try {
+      const verification = await requestBrowserVerification(deployResult.deployedUrl);
+      const passed = verification.passed;
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          status: passed ? 'done' : 'editing',
+          browserVerification: verification,
+          actions: [
+            ...prev.actions,
+            passed
+              ? 'Browser verification passed for deployed page'
+              : 'Browser verification reported issues; returned to editing'
+          ],
+          systemMessages: [
+            ...prev.systemMessages,
+            plannerMessage(passed ? 'verified' : 'editing', {
+              passed,
+              issues: verification.issues,
+              checkedAt: verification.checkedAt
+            }),
+            ...(passed ? [plannerMessage('done')] : [])
+          ]
+        };
+      });
+    } catch (error) {
+      const issue = error instanceof Error ? error.message : 'Unknown browser verification error';
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          status: 'editing',
+          browserVerification: {
+            passed: false,
+            issues: [`Verification endpoint failed: ${issue}`],
+            checkedAt: new Date().toISOString()
+          },
+          actions: [...prev.actions, 'Browser verification endpoint failed; returned to editing'],
+          systemMessages: [...prev.systemMessages, plannerMessage('editing')]
+        };
+      });
+    }
   };
 
-  const onVerify = () => {
-    patchProject((prev) => {
-      const verifying = { ...prev, status: 'verifying' as const };
-      const verification = testProject(verifying, emailValue || 'demo@example.com');
-      const status = verification.passed ? 'verified' : 'editing';
-      const doneStatus = verification.passed ? 'done' : status;
-      return {
-        ...verifying,
-        status: doneStatus,
-        testResults: verification,
+  const onVerify = async () => {
+    if (!project?.deployedUrl) {
+      return;
+    }
+
+    patchProject((prev) => ({
+      ...prev,
+      status: 'verifying',
+      actions: [...prev.actions, 'Triggered manual browser verification run']
+    }));
+
+    try {
+      const verification = await requestBrowserVerification(project.deployedUrl);
+      const passed = verification.passed;
+      patchProject((prev) => ({
+        ...prev,
+        status: passed ? 'done' : 'editing',
+        browserVerification: verification,
         actions: [
-          ...verifying.actions,
-          verification.passed ? 'Verified deployed page checks pass' : 'Verification failed; returned to editing'
+          ...prev.actions,
+          passed ? 'Manual browser verification passed' : 'Manual browser verification failed'
         ],
-        systemMessages: [...verifying.systemMessages, plannerMessage(status, verification), ...(verification.passed ? [plannerMessage('done')] : [])]
-      };
-    });
+        systemMessages: [
+          ...prev.systemMessages,
+          plannerMessage(passed ? 'verified' : 'editing', {
+            passed,
+            issues: verification.issues,
+            checkedAt: verification.checkedAt
+          }),
+          ...(passed ? [plannerMessage('done')] : [])
+        ]
+      }));
+    } catch (error) {
+      const issue = error instanceof Error ? error.message : 'Unknown browser verification error';
+      patchProject((prev) => ({
+        ...prev,
+        status: 'editing',
+        browserVerification: {
+          passed: false,
+          issues: [`Manual verification endpoint failed: ${issue}`],
+          checkedAt: new Date().toISOString()
+        },
+        actions: [...prev.actions, 'Manual browser verification request failed']
+      }));
+    }
   };
 
   const onSubmit = () => {

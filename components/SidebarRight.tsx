@@ -8,8 +8,8 @@ interface SidebarRightProps {
   selectedText: string;
   onSelectedTextChange: (value: string) => void;
   onRunTest: () => void;
-  onDeploy: () => void;
-  onVerify: () => void;
+  onDeploy: () => void | Promise<void>;
+  onVerify: () => void | Promise<void>;
 }
 
 export function SidebarRight({
@@ -73,6 +73,25 @@ export function SidebarRight({
                 {project.testResults.issues.map((issue) => <li key={issue}>{issue}</li>)}
               </ul>
             ) : null}
+
+            <div className="border-t border-slate-200 pt-2">
+              <p>
+                Browser Verify:{' '}
+                <span className="font-semibold text-slate-900">
+                  {project.browserVerification ? (project.browserVerification.passed ? 'Pass' : 'Fail') : 'Not run'}
+                </span>
+              </p>
+              {project.browserVerification?.issues.length ? (
+                <ul className="mt-1 list-disc pl-5">
+                  {project.browserVerification.issues.map((issue) => <li key={issue}>{issue}</li>)}
+                </ul>
+              ) : null}
+              {project.browserVerification?.screenshotPath ? (
+                <p className="mt-1 break-all">
+                  Screenshot: <a className="text-blue-600 underline" href={project.browserVerification.screenshotPath} target="_blank" rel="noreferrer">{project.browserVerification.screenshotPath}</a>
+                </p>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
